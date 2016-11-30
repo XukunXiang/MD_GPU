@@ -19,7 +19,7 @@
 
 //simulation setup
 #define N 1000				//number of particles
-#define Ntime 3001		//number of iternations
+#define Ntime 1		//number of iternations
 #define newR 46022.8	//initial radius of bunch
 #define cutoff 20			//lower limit of the initial distance between electrons
 
@@ -28,9 +28,9 @@
 #define vc 5.85E3			//speed of light
 #define PI 3.141592653589793	//  \pi
 
+double inline getrand(){	return (double)rand()/(double)RAND_MAX;}
 
-double inline getrand(){
-	return (double)rand()/(double)RAND_MAX;
+void verlet(double r[N][3]){
 }
 
 int main() {
@@ -44,14 +44,14 @@ int main() {
 
 	RVo = fopen("./RandV.dat","w+");
 	To = fopen("./time.dat","w+");
-	initR = fopen("./initR","w+");
+	initR = fopen("./initR.xyz","w+");
 
 	srand(time(NULL));
 	numb = 0;
 	while (numb < N) {
-		r0 = newR*getrand();
-		r1 = newR*getrand();
-		r2 = newR*getrand();
+		r0 = newR*(2*getrand()-1);
+		r1 = newR*(2*getrand()-1);
+		r2 = newR*(2*getrand()-1);
 		check = 0;
 		if (sqrt(r0*r0+r1*r1+r2*r2) < newR) {
 			for (i = 0; i < numb; i++){
@@ -72,11 +72,22 @@ int main() {
 		}
 	}
 	
-	for (i = 0; i<N; i++) {
-		fprintf(initR,"%11.3f \t %11.3f \t %11.3f \n",R[i][0],R[i][1],R[i][2]);
+	//output initR for check
+//	fprintf(initR,"%d \n", N);
+//	fprintf(initR,"%d \n", 0);
+//	for (i = 0; i<N; i++) {
+//		fprintf(initR,"%5d %11.3f \t %11.3f \t %11.3f \n",1,R[i][0],R[i][1],R[i][2]);
+//	}
+	for (iter = 0; iter< Ntime; iter++) {
+		verlet(R);
+		realt += dt;
+/*
+		//output
+		if ((iter % plotstride) == 1) {		
+		}
+*/
 	}
-//	for (i = 0; i< N)
-	
+
 
 	fclose(RVo);
 	fclose(To);
