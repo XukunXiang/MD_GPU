@@ -69,7 +69,7 @@ void getForce(double f[N][3],double r[N][3]) {
 				rel[k] = r[i][k] - r[j][k];
 				rel_c += rel[k]*rel[k];
 			}
-			rel_c = - pow(rel_c,1.5 );
+			rel_c = pow(rel_c,-1.5 );
 			for (k=0; k<3; k++) {
 				fij[k] = rel[k]*rel_c;
 				//atomic operation here
@@ -101,7 +101,7 @@ int main() {
 	double R[N][3] = {{0.0}}, V[N][3] = {{0.0}}, F[N][3]={{0.0}};
 	int i, j, k, iter;
 	int numb, check;
-	double dt = 1.0, realt = 0.0;
+	double dt = 0.1, realt = 0.0;
 	int plotstride = 2;
 	double r0,r1,r2,rel0,rel1,rel2;
 	double KE,PE;
@@ -151,7 +151,7 @@ int main() {
 		if ((iter % plotstride) == 1) {		
 			PE = getPE(R);
 			KE = getKE(V);
-			printf("%11.3f \t %11.3f \t %11.3f \n", PE, KE, PE+KE);
+			printf("%.10e \t %.10e \t %.10e \n", PE, KE, PE+KE);
 		}
 	}
 
