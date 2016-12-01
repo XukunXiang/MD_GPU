@@ -30,6 +30,34 @@
 
 double inline getrand(){ return (double)rand()/(double)RAND_MAX; }
 
+double getPE(double r[N][3]){
+	int i,j,k;
+	double rel,vij,PE_c=0.0;
+	for(j=0; j<(N-1); j++) {
+		for(i=j+1; i<N; i++) {
+			vij = 0.0;
+			for(k=0; k<3; k++) {
+				rel = r[i][k] - r[j][k];
+				vij += rel*rel; //vij = r^2 for now
+			}
+			PE_c += pow(vij,-0.5); // r^(-1)
+		}
+	}
+	return PE_c;
+}
+
+double getKE(double v[N][3]){
+	int i,j;
+	double KE_c=0.0; //sum(v**2)
+	for (i=0; i<N; i++){
+		for (j=0; j<3; j++) {
+			KE_c += pow(v[i][j],2);
+		}
+	}
+	KE_c = 0.5*m*KE_c;
+	return KE_c;
+}
+
 void getForce(double f[N][3],double r[N][3]) {
 	int i,j,k;
 	double rel[3], rel_c, fij[3];
@@ -74,8 +102,9 @@ int main() {
 	int i, j, k, iter;
 	int numb, check;
 	double dt = 1.0, realt = 0.0;
+	int plotstride = 2;
 	double r0,r1,r2,rel0,rel1,rel2;
-	int plotstride = 20;
+	double KE,PE;
 	FILE *RVo,*To,*initR;
 
 	RVo = fopen("./RandV.dat","w+");
@@ -117,11 +146,13 @@ int main() {
 	for (iter = 0; iter< Ntime; iter++) {
 		verlet(R,V,F,dt);
 		realt += dt;
-/*
+
 		//output
 		if ((iter % plotstride) == 1) {		
+			PE = getPE(R);
+			KE = getKE(V);
+			printf("%11.3f \t %11.3f \t %11.3f \n", PE, KE, PE+KE);
 		}
-*/
 	}
 
 	fclose(RVo);
