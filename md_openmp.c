@@ -64,8 +64,7 @@ void getForce(double f[N][3],double r[N][3]) {
 	int i,j,k;
 	double rel[3], rel_c, fij[3];
 	//use openmp here with (rel[3],rel_c,fij) private
-//	#pragma omp parallel for private(i,j,k,rel,rel_c,fij)
-	
+	#pragma omp parallel for private(i,j,k,rel,rel_c,fij)
 	for (j=0; j<(N-1); j++) {
 		for (i=j+1; i<N; i++) {
 			rel_c = 0.0;
@@ -77,9 +76,9 @@ void getForce(double f[N][3],double r[N][3]) {
 			for (k=0; k<3; k++) {
 				fij[k] = rel[k]*rel_c;
 				//atomic operation here
-//				#pragma omp atomic
+				#pragma omp atomic
 				f[j][k] -= fij[k];
-//				#pragma omp atomic
+				#pragma omp atomic
 				f[i][k] += fij[k];
 			}
 		}
