@@ -26,14 +26,15 @@
 
 //parameters
 #define m 5.4858e-4		//elelctron mass
-#define vc 5.85E3			//speed of light
+#define vc 5.85e3			//speed of light
 #define PI 3.141592653589793	//  \pi
 
 double inline getrand(){ return (double)rand()/(double)RAND_MAX; }
 
 double getPE(double r[N][3]){
 	int i,j,k;
-	double rel,vij,PE_c=0.0;
+	double rel,vij;
+	double PE_c = 0.0;
 	for(j=0; j<(N-1); j++) {
 		for(i=j+1; i<N; i++) {
 			vij = 0.0;
@@ -63,21 +64,22 @@ void getForce(double f[N][3],double r[N][3]) {
 	int i,j,k;
 	double rel[3], rel_c, fij[3];
 	//use openmp here with (rel[3],rel_c,fij) private
-	#pragma omp parallel for private(i,j,k,rel,rel_c,fij)
+//	#pragma omp parallel for private(i,j,k,rel,rel_c,fij)
+	
 	for (j=0; j<(N-1); j++) {
 		for (i=j+1; i<N; i++) {
 			rel_c = 0.0;
 			for (k=0; k<3; k++) {
 				rel[k] = r[i][k] - r[j][k];
-				rel_c += rel[k]*rel[k];
+				rel_c += pow(rel[k], 2.0 );
 			}
-			rel_c = pow(rel_c,-1.5 );
+			rel_c = pow(rel_c, -1.5 );
 			for (k=0; k<3; k++) {
 				fij[k] = rel[k]*rel_c;
 				//atomic operation here
-				#pragma omp atomic
+//				#pragma omp atomic
 				f[j][k] -= fij[k];
-				#pragma omp atomic
+//				#pragma omp atomic
 				f[i][k] += fij[k];
 			}
 		}
@@ -91,6 +93,7 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], double dt){
 		for (j=0; j<3; j++) {
 			v[i][j] += f[i][j]*hdtm;
 			r[i][j] += v[i][j]*dt;
+			f[i][j] = 0.0; //setup for force calculation
 		}
 	}
 	getForce(f,r);
@@ -102,10 +105,10 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], double dt){
 }
 
 int main() {
-	double R[N][3] = {{0.0}}, V[N][3] = {{0.0}}, F[N][3]={{0.0}};
+	double R[N][3] = {{0.0}}, V[N][3] = {{1.0}}, F[N][3]={{0.0}};
 	int i, iter;
 	int numb, check;
-	double dt = 0.1, realt = 0.0;
+	double dt = 1.0, realt = 0.0;
 	int plotstride = 20;
 	double r0,r1,r2,rel0,rel1,rel2;
 	double KE,PE;
@@ -155,7 +158,7 @@ int main() {
 		if ((iter % plotstride) == 1) {		
 			PE = getPE(R);
 			KE = getKE(V);
-			printf("%11.5f \t %11.5f \t %11.5f \n", PE, KE, PE+KE);
+			printf("%7d \t %11.5f \t %11.5f \t %11.5f \n", (int)realt, PE, KE, PE+KE);
 		}
 		if (iter == 200) dt = 5.0;
 		if (iter == 500) dt = 15.0;
