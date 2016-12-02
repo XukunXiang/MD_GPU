@@ -2,10 +2,11 @@
 	This code is using Molecular dynamics to study the evolution of the electron bunch form the photo cathod in Ultrafast electron diffraction experiment.
 
 	Goals:
-	1. make this md c code working
-	2. implement OpenMP with this code and check with the fortran version
-	3. implement CUDA to compare the result with OpenMP
-	4. try to get PPPM working with GPU
+	1. [done] make this md c code working
+	2. [done] implement OpenMP with this code 
+	3. check with the fortran version
+	4. implement CUDA to compare the result with OpenMP
+	5. try to get PPPM working with GPU
 
 	origian Fortran code version: MD_1121.f90
 
@@ -18,13 +19,13 @@
 #include <omp.h>
 
 //simulation setup
-#define N 100				//number of particles
-#define Ntime 10		//number of iternations
+#define N 1000				//number of particles
+#define Ntime 1000			//number of iternations
 #define newR 46022.8	//initial radius of bunch
 #define cutoff 20			//lower limit of the initial distance between electrons
 
 //parameters
-#define m 5.4858E-4		//elelctron mass
+#define m 5.4858e-4		//elelctron mass
 #define vc 5.85E3			//speed of light
 #define PI 3.141592653589793	//  \pi
 
@@ -38,7 +39,7 @@ double getPE(double r[N][3]){
 			vij = 0.0;
 			for(k=0; k<3; k++) {
 				rel = r[i][k] - r[j][k];
-				vij += rel*rel; //vij = r^2 for now
+				vij += pow(rel,2.0); //vij = r^2 for now
 			}
 			PE_c += pow(vij,-0.5); // r^(-1)
 		}
@@ -48,10 +49,10 @@ double getPE(double r[N][3]){
 
 double getKE(double v[N][3]){
 	int i,j;
-	double KE_c=0.0; //sum(v**2)
+	double KE_c = 0.0; //sum(v**2)
 	for (i=0; i<N; i++){
 		for (j=0; j<3; j++) {
-			KE_c += pow(v[i][j],2);
+			KE_c += pow(v[i][j],2.0);
 		}
 	}
 	KE_c = 0.5*m*KE_c;
@@ -61,7 +62,8 @@ double getKE(double v[N][3]){
 void getForce(double f[N][3],double r[N][3]) {
 	int i,j,k;
 	double rel[3], rel_c, fij[3];
-	//use openmp here with (rel[3],rel_c) private
+	//use openmp here with (rel[3],rel_c,fij) private
+	#pragma omp parallel for private(i,j,k,rel,rel_c,fij)
 	for (j=0; j<(N-1); j++) {
 		for (i=j+1; i<N; i++) {
 			rel_c = 0.0;
@@ -73,7 +75,9 @@ void getForce(double f[N][3],double r[N][3]) {
 			for (k=0; k<3; k++) {
 				fij[k] = rel[k]*rel_c;
 				//atomic operation here
+				#pragma omp atomic
 				f[j][k] -= fij[k];
+				#pragma omp atomic
 				f[i][k] += fij[k];
 			}
 		}
@@ -99,10 +103,10 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], double dt){
 
 int main() {
 	double R[N][3] = {{0.0}}, V[N][3] = {{0.0}}, F[N][3]={{0.0}};
-	int i, j, k, iter;
+	int i, iter;
 	int numb, check;
 	double dt = 0.1, realt = 0.0;
-	int plotstride = 2;
+	int plotstride = 20;
 	double r0,r1,r2,rel0,rel1,rel2;
 	double KE,PE;
 	FILE *RVo,*To,*initR;
@@ -151,8 +155,12 @@ int main() {
 		if ((iter % plotstride) == 1) {		
 			PE = getPE(R);
 			KE = getKE(V);
-			printf("%.10e \t %.10e \t %.10e \n", PE, KE, PE+KE);
+			printf("%11.5f \t %11.5f \t %11.5f \n", PE, KE, PE+KE);
 		}
+		if (iter == 200) dt = 5.0;
+		if (iter == 500) dt = 15.0;
+		if (iter == 700) dt = 50.0;
+		if (iter == 2000) plotstride = 100;
 	}
 
 	fclose(RVo);
