@@ -1,0 +1,9 @@
+# data files:
+*.dat
+*.xyz
+
+#temporary files:
+*.swp
+
+#executable file for this project:
+d
