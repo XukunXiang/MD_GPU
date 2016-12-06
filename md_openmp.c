@@ -4,8 +4,15 @@
 	Goals:
 	1. [done] make this md c code working
 	2. [done] implement OpenMP with this code 
-	3. check with the fortran version
-	4. implement CUDA to compare the result with OpenMP
+	3. [done] check with the fortran version
+	4. working CPU with PPPM
+		4.1 Get all the possible component for GPU version in CPU
+			* particle pre-assignment for spacial decomposition on CPU
+			*	data(position) move from host to device in share mem[look at cuda example]
+			*	CHARGE ASSIGNMENT with weight function
+			*	FIELD CALCULATION using fft library for electronic potential
+					differential of potential can get the electronic field
+			*	INTERPOLATION of force with the same weight function to get the force from neighboring mesh points 
 	5. try to get PPPM working with GPU
 
 	origian Fortran code version: MD_1121.f90
