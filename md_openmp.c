@@ -27,16 +27,17 @@
 #include <math.h>
 #include <time.h>
 #include <omp.h>
+#include <fftw3.h>
 
 //simulation setup
-#define N 1000				//number of particles
-#define Ntime 1000		//number of iternations
-#define newR 46022.8	//initial radius of bunch
-#define cutoff 2000.0	//lower limit of the initial distance between electrons
+#define N 1000					//number of particles
+#define Ntime 5000		//number of iternations
+#define newR 2.0E6		//size of the simulation box ~ 100 um
+#define cutoff 200.0	//lower limit of the initial distance between electrons ~ 100 nm
 
 //PPPM setup
 #define bn 10					//number of boxes per direction
-#define boxcap 101		//temporary cap for particles in one box; update to class later
+#define boxcap 100		//temporary cap for particles in one box; update to class later
 
 //parameters
 #define m 5.4858e-4		//elelctron mass
@@ -44,6 +45,21 @@
 #define PI 3.141592653589793	//  \pi
 
 double inline getrand(){ return (double)rand()/(double)RAND_MAX; }
+
+double PBC(double r1) {
+	double pr;
+	if (r1 > 0.0) {
+	  r1 -= floor(r1/newR)*newR;
+	  pr = (r1 < (0.5*newR)) ? r1 : (r1 - newR) ;
+	}
+	else if (r1 < 0.0) {
+	  r1 += ceil(r1/newR)*newR;
+	  pr = (r1 > (-0.5*newR))? r1 : (r1 + newR) ;
+	}
+	else {pr = r1;}
+	if (abs(pr)> 0.5*newR) {printf("pbc failed! \n");}
+	return pr;
+}
 
 double getPE(double r[N][3]){
 	int i,j,k;
@@ -120,6 +136,7 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][bo
 		for (j=0; j<3; j++) {
 			v[i][j] += f[i][j]*hdtm;
 			r[i][j] += v[i][j]*dt;
+			r[i][j] = PBC(r[i][j]);
 			f[i][j] = 0.0; //setup for force calculation
 		}
 	}
@@ -191,7 +208,15 @@ int main() {
 			PE = getPE(R);
 			KE = getKE(V);
 			printf("%7d \t %11.5f \t %11.5f \t %11.5f \n", (int)realt, PE, KE, PE+KE);
+			
+			//position output
+			fprintf(initR,"%d \n", N);
+			fprintf(initR,"%d \n", iter);
+			for (i = 0; i<N; i++) {
+				fprintf(initR,"%5d %11.3f \t %11.3f \t %11.3f \n",1,R[i][0],R[i][1],R[i][2]);
+			}
 		}
+
 		if (iter == 200) dt = 5.0;
 		if (iter == 500) dt = 15.0;
 		if (iter == 700) dt = 50.0;
