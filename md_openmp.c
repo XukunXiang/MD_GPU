@@ -30,7 +30,7 @@
 
 //simulation setup
 #define N 500					//number of particles
-#define Ntime 1000		//number of iternations
+#define Ntime 100
 #define newR 2.0E6		//size of the simulation box ~ 100 um
 #define cutoff 200.0	//lower limit of the initial distance between electrons ~ 100 nm
 
@@ -58,7 +58,9 @@ double PBC(double r1) {
 	  r1 += ceil(r1/newR)*newR;
 	  pr = (r1 > (-0.5*newR))? r1 : (r1 + newR) ;
 	}
-	else {pr = r1;}
+	else {
+		pr = r1;
+	}
 	if (abs(pr)> 0.5*newR) {printf("pbc failed! \n");}
 	return pr;
 }
@@ -144,9 +146,46 @@ void update_box(double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],doub
 	}
 }
 
-void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap]) {
-	int i,j,k;
-	double rel[3], rel_c, fij[3];
+void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn]) {
+	int i,j,k,bx,by,bz,dbx,dby,dbz,pbx,pby,pbz,neighbor_j;
+	double rel[3], rel_c, rel_c2, fij[3], field[3][bn][bn][bn];
+///	double min,min_t=1e20;
+//  getGlobalField(rho,field);
+
+//	#pragma omp parallel for private(bx,by,bz,pbx,pby,pbz,dbx,dby,dbz,neighbor_j,rel_c2,j,k)
+	for (i=0; i<N; i++) {
+///		min = 1e20;
+		bx = boxid[i][0];
+		by = boxid[i][1];
+		bz = boxid[i][2];
+		for (dbx=-1; dbx<2; dbx++){
+			pbx = pbc_box(bx+dbx);
+			for (dby=-1; dby<2; dby++){
+				pby = pbc_box(by+dby);
+				for (dbz=-1; dbz<2; dbz++){
+					pbz = pbc_box(bz+dbz);
+					for (j=1; j<(box[bx][by][bz][0]+1); j++){
+						neighbor_j = box[bx][by][bz][j];
+						if (neighbor_j != i) {
+							rel_c2 = 0.0;
+							for (k=0; k<3; k++) {
+								rel[k] = PBC(r[i][k]-r[neighbor_j][k]);
+								rel_c2 += rel[k]*rel[k];
+							}
+							for(k=0; k<3; k++) {
+							//	if (rel_c2 < 1e-6) {rel_c2 = 1e-6; printf("small number!");}
+								f[i][k] += rel[k]/pow(rel_c2,1.5);
+							}
+///							min = (min > rel_c2)? rel_c2 : min;
+						}
+					}
+				}
+			}
+		}
+///		min_t = (min_t > min) ? min : min_t;
+	}
+///	printf("r_min = %11.3f \n",min_t);
+/********** full interaction version	
 	//use openmp here with (rel[3],rel_c,fij) private
 	#pragma omp parallel for private(i,j,k,rel,rel_c,fij)
 	for (j=0; j<(N-1); j++) {
@@ -168,11 +207,12 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap]) {
 			}
 		}
 	}
+*********/
 }
 
 void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn],double w[N][2][2][2], double dt){
 	int i,j;
-	double hdtm = 0.5*dt/m; 
+	double hdtm = 0.5*dt/m;
 	for (i=0; i<N; i++) {
 		for (j=0; j<3; j++) {
 			v[i][j] += f[i][j]*hdtm;
@@ -182,7 +222,7 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][bo
 		}
 	}
 	update_box(r,box,boxid,rho,w);
-	getForce(f,r,box);
+	getForce(f,r,box,boxid,rho);
 	for (i=0; i<N; i++) {
 		for (j=0; j<3; j++) {
 			v[i][j] += f[i][j]*hdtm;
@@ -191,13 +231,13 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][bo
 }
 
 int main() {
-	double R[N][3] = {{0.0}}, V[N][3] = {{1.0}}, F[N][3]={{0.0}};
+	double R[N][3] = {{0.0}}, V[N][3] = {{0.0}}, F[N][3]={{0.0}};
 	int box[bn][bn][bn][boxcap]; // need to go to class or dynamic array later 
 	// [0] is for number of electrons in the box, and then [1]-[number] is the electron id
 	int boxid[N][3];
 	int i, iter;
 	int numb, check;
-	double dt = 1.0, realt = 0.0;
+	double dt = 2e-4, realt = 0.0;
 	int plotstride = 20;
 	double r0,r1,r2,rel0,rel1,rel2;
 	double KE,PE;
@@ -243,6 +283,7 @@ int main() {
 //		fprintf(initR,"%5d %11.3f \t %11.3f \t %11.3f \n",1,R[i][0],R[i][1],R[i][2]);
 //	}
 	for (iter = 0; iter< Ntime; iter++) {
+//		printf("%d \t", iter);
 		verlet(R,V,F,box,boxid,rho,w,dt);
 		realt += dt;
 
@@ -250,8 +291,7 @@ int main() {
 		if ((iter % plotstride) == 1) {		
 			PE = getPE(R);
 			KE = getKE(V);
-			printf("%7d \t %11.5f \t %11.5f \t %11.5f \n", (int)realt, PE, KE, PE+KE);
-			
+			printf("%11.5f \t %11.5f \t %11.5f \t %11.5f \n", realt, PE, KE, PE+KE);
 			//position output
 			fprintf(initR,"%d \n", N);
 			fprintf(initR,"%d \n", iter);

@@ -1,4 +1,4 @@
-CFLAGS = -Wall -O3 -g -fopenmp 
+CFLAGS = -Wall -O3 -g  
 LIBS = -lfftw3 -lm
 
 TARGET = md_openmp
