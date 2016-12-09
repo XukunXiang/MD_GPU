@@ -1,22 +1,6 @@
 /*
 	This code is using Molecular dynamics to study the evolution of the electron bunch form the photo cathod in Ultrafast electron diffraction experiment.
 
-	Goals:
-	1. [done] make this md c code working
-	2. [done] implement OpenMP with this code 
-	3. [done] check with the fortran version
-	4. working CPU with PPPM
-		* [done] set up Periodic boundary conditions
-		* [done] particle pre-assignment for spacial decomposition on CPU
-		*	data(position) move from host to device in share mem[look at cuda example]
-		*	CHARGE ASSIGNMENT with weight function
-		*	FIELD CALCULATION using fft library for electronic potential
-				differential of potential can get the electronic field
-		*	INTERPOLATION of force with the same weight function to get the force from neighboring mesh points 
-	5. try to get PPPM working with GPU
-	6. Other improvement
-		* set up a class for neighbor list storage
-
 	origian Fortran code version: MD_1121.f90
 
 */
@@ -29,17 +13,18 @@
 #include <fftw3.h>
 
 //simulation setup
-#define N 500					//number of particles
-#define Ntime 100
+#define N 5000					//number of particles
+#define Ntime 1 
 #define newR 2.0E6		//size of the simulation box ~ 100 um
 #define cutoff 200.0	//lower limit of the initial distance between electrons ~ 100 nm
 
 //PPPM setup
 #define bn 10					//number of boxes per direction
-#define boxcap 100		//temporary cap for particles in one box; update to class later
+#define boxcap 50		//temporary cap for particles in one box; update to class later
 #define hx 2.0E5			//[real space] cell size newR/bn
 #define hx3 8.0E15		//hx^3 as the cell volume
 #define grid_offset 5	//move the center of grid to 0 to match the particles
+#define bn3 1000			// total grid/mesh point number
 
 //parameters
 #define m 5.4858e-4		//elelctron mass
@@ -48,6 +33,7 @@
 
 double inline getrand(){ return (double)rand()/(double)RAND_MAX; }
 
+/*	
 double PBC(double r1) {
 	double pr;
 	if (r1 > 0.0) {
@@ -64,6 +50,7 @@ double PBC(double r1) {
 	if (abs(pr)> 0.5*newR) {printf("pbc failed! \n");}
 	return pr;
 }
+*/
 
 double getPE(double r[N][3]){
 	int i,j,k;
@@ -130,15 +117,29 @@ void charge_assign(int b[3], double basis[3],double rho[bn][bn][bn],int id,doubl
 
 // assign electron into bn*bn*bn boxes and store their idx
 void update_box(double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn],double w[N][2][2][2]) {
-	int i,j,realb[3],b[3],num;
+	int i,j,k,realb[3],b[3],num;
 	double basis[3];
-	for (i=0; i<N; i++) { 
+	for (i=0; i<bn; i++){
+		for (j=0; j<bn; j++){
+			for (k=0; k<bn; k++){
+				box[i][j][k][0]=0;
+				rho[i][j][k] = 0.0;
+			}
+		}
+	}
+	printf("update box starts\n");
+	for (i=0; i<N; i++) {
+//		printf("i = %d \n",i);
 		for (j=0; j<3; j++) {
 			realb[j] = (int)floor(r[i][j]/hx);
-			b[j] = (int)floor(r[i][j]/hx) + grid_offset;
+			//b[j] = (int)floor(r[i][j]/hx) + grid_offset;
+			b[j] = (int)floor(r[i][j]/hx);
+//			printf("%d ",b[j]);
 			boxid[i][j] = b[j];
+//			printf("%d ",boxid[i][j]);
 			basis[j] = r[i][j] - realb[j]*hx;
 		}
+//		printf("\n");
 		num = box[b[0]][b[1]][b[2]][0]+1;
 		box[b[0]][b[1]][b[2]][0] = num;
 		box[b[0]][b[1]][b[2]][num] = i;
@@ -146,30 +147,136 @@ void update_box(double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],doub
 	}
 }
 
-void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn]) {
-	int i,j,k,bx,by,bz,dbx,dby,dbz,pbx,pby,pbz,neighbor_j;
-	double rel[3], rel_c, rel_c2, fij[3], field[3][bn][bn][bn];
-///	double min,min_t=1e20;
-//  getGlobalField(rho,field);
+void setupKpoints(double kpoints[bn]){
+	double k;
+	int i;
+	double nyquist = (double)bn/newR/2.0;
+	for (i=0; i<(bn/2+1); i++){
+		kpoints[i] = 2*PI*(double)i/(double)(bn/2)*nyquist;
+		if (i!=(bn/2) && i!=0) {
+			kpoints[bn-i] = kpoints[i];
+		}
+	}
+}
 
-//	#pragma omp parallel for private(bx,by,bz,pbx,pby,pbz,dbx,dby,dbz,neighbor_j,rel_c2,j,k)
+void getGlobalField(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
+	fftw_complex 	*f_fft_result, *b_fft_in_x, *b_fft_in_y, *b_fft_in_z;
+	fftw_plan			plan_forward, plan_backward_x, plan_backward_y, plan_backward_z;
+	double outputcheck[bn][bn][bn];
+	double kpoints[bn];
+	int i,j,k,idx;
+	double fr,fi; // for real part and imaginary part 
+	double kx,ky,kz,kx2,ky2,kz2,k2i;
+
+	f_fft_result  = ( fftw_complex* ) fftw_malloc( sizeof( fftw_complex ) * bn3 );
+	b_fft_in_x 		= ( fftw_complex* ) fftw_malloc( sizeof( fftw_complex ) * bn3 );
+	b_fft_in_y 		= ( fftw_complex* ) fftw_malloc( sizeof( fftw_complex ) * bn3 );
+	b_fft_in_z 		= ( fftw_complex* ) fftw_malloc( sizeof( fftw_complex ) * bn3 );
+
+	plan_forward  	= fftw_plan_dft_r2c_3d(bn,bn,bn,&rho[0][0][0],f_fft_result,FFTW_ESTIMATE );
+	plan_backward_x = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_x,&field[0][0][0][0],FFTW_ESTIMATE );
+	plan_backward_y = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_y,&field[1][0][0][0],FFTW_ESTIMATE );
+	plan_backward_z = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_z,&field[2][0][0][0],FFTW_ESTIMATE );
+
+	printf("setupPPPM\n");
+/*	
+	for(i=0; i<bn; i++) {
+		fprintf(stdout, "rho[%d]=%11.3f \n", i, rho[0][0][i]);
+	}
+*/
+	
+	fftw_execute( plan_forward );
+	printf("finish forward\n");
+
+	setupKpoints(kpoints);//since newR =2E6, k might be too small
+	printf("setupKpoints\n");
+	for (i=0; i< bn; i++){
+		kx =  kpoints[i];
+		kx2 = kx*kx;
+		for (j=0; j<bn; j++){
+			ky = kpoints[j];
+			ky2 = ky*ky;
+			for (k=0; k<(bn/2+1); k++) {
+				kz = kpoints[k];
+				kz2 = kz*kz;
+				idx = 2*(k+(bn/2+1)*j+bn*(bn/2+1)*i);
+				if (i==0 && j==0 && k==0) {
+					k2i = 1.0;
+				}
+				else {
+					k2i = 1/(kx2+ky2+kz2);
+				}
+				idx = 2*(bn*(bn/2+1)*i + (bn/2+1)*j + k);
+				fr = f_fft_result[idx][0];
+				fi = f_fft_result[idx][1];
+				
+				b_fft_in_x[idx][0] = kx*k2i*fi;
+				b_fft_in_x[idx][1] = -kx*k2i*fr;
+				b_fft_in_y[idx][0] = ky*k2i*fi;
+				b_fft_in_y[idx][1] = -ky*k2i*fr;
+				b_fft_in_z[idx][0] = kz*k2i*fi;
+				b_fft_in_z[idx][1] = -kz*k2i*fr;
+			}
+		}
+	}
+	printf("output==>input\n");
+  fftw_execute( plan_backward_x );
+  fftw_execute( plan_backward_y );
+  fftw_execute( plan_backward_z );
+/*
+	for(i=0; i<bn; i++) {
+		fprintf(stdout, "result[%d]=%11.3f \n", i, field[0][0][0][i]);
+	}
+*/
+//	printf("start free fftw\n");
+	//free memory
+//	fftw_destroy_plan( plan_forward );
+//	printf("finish free plan_forward\n");
+//	fftw_destroy_plan( plan_backward_x );
+//	fftw_destroy_plan( plan_backward_y );
+//	fftw_destroy_plan( plan_backward_z );
+//	
+//	fftw_free( f_fft_result );
+//	fftw_free( b_fft_in_x );
+//	fftw_free( b_fft_in_y );
+//	fftw_free( b_fft_in_z );
+//	printf("finish free\n");
+}
+
+
+void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn]) {
+	int i,j,k,bx,by,bz,dbx,dby,dbz,pbx,pby,pbz,nb_j;
+	double rel[3], rel_c, rel_c2, fij[3], field[3][bn][bn][bn], ri[3];
+	double dummy;
+///	double min,min_t=1e20;
+
+	getGlobalField(rho,field);
+
+//	#pragma omp parallel for private(bx,by,bz,pbx,pby,pbz,dbx,dby,dbz,nb_j,rel_c2,j,k,dummy)
 	for (i=0; i<N; i++) {
-///		min = 1e20;
+///		min = 1e20;dd
+//		printf("%d: ",i);
 		bx = boxid[i][0];
 		by = boxid[i][1];
 		bz = boxid[i][2];
-		for (dbx=-1; dbx<2; dbx++){
-			pbx = pbc_box(bx+dbx);
-			for (dby=-1; dby<2; dby++){
-				pby = pbc_box(by+dby);
-				for (dbz=-1; dbz<2; dbz++){
-					pbz = pbc_box(bz+dbz);
-					for (j=1; j<(box[bx][by][bz][0]+1); j++){
-						neighbor_j = box[bx][by][bz][j];
-						if (neighbor_j != i) {
+		ri[0] = r[i][0];
+		ri[1] = r[i][1];
+		ri[2] = r[i][2];
+//		printf("%d %d %d %d %d %d \n", bx,by,bz,boxid[i][0],boxid[i][1],boxid[i][2]);
+		for (dbx=0; dbx<3; dbx++){
+			pbx = pbc_box(bx+dbx-1);
+			for (dby=0; dby<3; dby++){
+				pby = pbc_box(by+dby-1);
+				for (dbz=0; dbz<3; dbz++){
+					pbz = pbc_box(bz+dbz-1);
+					for (j=1; j<(box[pbx][pby][pbz][0]+1); j++){
+						nb_j = box[pbx][pby][pbz][j];
+//						printf("j: %d \t",j);
+						if (nb_j != i) {
 							rel_c2 = 0.0;
 							for (k=0; k<3; k++) {
-								rel[k] = PBC(r[i][k]-r[neighbor_j][k]);
+								dummy = ri[k]-r[nb_j][k];
+								rel[k] = dummy - floor(dummy/newR)*newR;
 								rel_c2 += rel[k]*rel[k];
 							}
 							for(k=0; k<3; k++) {
@@ -184,6 +291,7 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 		}
 ///		min_t = (min_t > min) ? min : min_t;
 	}
+	printf("getforce finish\n");
 ///	printf("r_min = %11.3f \n",min_t);
 /********** full interaction version	
 	//use openmp here with (rel[3],rel_c,fij) private
@@ -217,7 +325,7 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][bo
 		for (j=0; j<3; j++) {
 			v[i][j] += f[i][j]*hdtm;
 			r[i][j] += v[i][j]*dt;
-			r[i][j] = PBC(r[i][j]);
+			r[i][j] = r[i][j]-floor(r[i][j]/newR)*newR;
 			f[i][j] = 0.0; //setup for force calculation
 		}
 	}
@@ -228,6 +336,7 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][bo
 			v[i][j] += f[i][j]*hdtm;
 		}
 	}
+	printf("update v finish\n");
 }
 
 int main() {
@@ -252,9 +361,12 @@ int main() {
 	srand(time(NULL));
 	numb = 0;
 	while (numb < N) {
-		r0 = newR*(2*getrand()-1);
-		r1 = newR*(2*getrand()-1);
-		r2 = newR*(2*getrand()-1);
+//		r0 = newR*(2*getrand()-1);
+//		r1 = newR*(2*getrand()-1);
+//		r2 = newR*(2*getrand()-1);
+		r0 = newR*getrand();
+		r1 = newR*getrand();
+		r2 = newR*getrand();
 
 		check = 0;
 		if (sqrt(r0*r0+r1*r1+r2*r2) < newR) {
@@ -282,16 +394,18 @@ int main() {
 //	for (i = 0; i<N; i++) {
 //		fprintf(initR,"%5d %11.3f \t %11.3f \t %11.3f \n",1,R[i][0],R[i][1],R[i][2]);
 //	}
+
 	for (iter = 0; iter< Ntime; iter++) {
-//		printf("%d \t", iter);
+		printf("iter %d: \n", iter);
 		verlet(R,V,F,box,boxid,rho,w,dt);
 		realt += dt;
-
-		//output
+		printf("update realtime \n");
+/*
+//output
 		if ((iter % plotstride) == 1) {		
 			PE = getPE(R);
 			KE = getKE(V);
-			printf("%11.5f \t %11.5f \t %11.5f \t %11.5f \n", realt, PE, KE, PE+KE);
+//			printf("%11.5f \t %11.5f \t %11.5f \t %11.5f \n", realt, PE, KE, PE+KE);
 			//position output
 			fprintf(initR,"%d \n", N);
 			fprintf(initR,"%d \n", iter);
@@ -304,11 +418,13 @@ int main() {
 		if (iter == 500) dt = 15.0;
 		if (iter == 700) dt = 50.0;
 		if (iter == 2000) plotstride = 100;
+*/
 	}
+
 
 	fclose(RVo);
 	fclose(To);
 	fclose(initR);
 
-	return 0;
+//	return 0;
 }
