@@ -20,7 +20,7 @@
 
 //PPPM setup
 #define bn 10					//number of boxes per direction
-#define boxcap 50		//temporary cap for particles in one box; update to class later
+#define boxcap 500		//temporary cap for particles in one box; update to class later
 #define hx 2.0E5			//[real space] cell size newR/bn
 #define hx3 8.0E15		//hx^3 as the cell volume
 #define grid_offset 5	//move the center of grid to 0 to match the particles
@@ -244,38 +244,35 @@ void getGlobalField(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 }
 
 
-void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn]) {
-	int i,j,k,bx,by,bz,dbx,dby,dbz,pbx,pby,pbz,nb_j;
-	double rel[3], rel_c, rel_c2, fij[3], field[3][bn][bn][bn], ri[3];
+void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn],double w[N][2][2][2]) {
+	int i,j,k,fx,b[3],dbx,dby,dbz,pbx,pby,pbz,nb_j;
+	double rel[3], rel_c, rel_c2, fij[3], field[3][bn][bn][bn], ri[3], rj[3];
 	double dummy;
-///	double min,min_t=1e20;
+	int jx,jy,jz,ijx,ijy,ijz;
+	double jrel2;
 
 	getGlobalField(rho,field);
 
 //	#pragma omp parallel for private(bx,by,bz,pbx,pby,pbz,dbx,dby,dbz,nb_j,rel_c2,j,k,dummy)
 	for (i=0; i<N; i++) {
-///		min = 1e20;dd
-//		printf("%d: ",i);
-		bx = boxid[i][0];
-		by = boxid[i][1];
-		bz = boxid[i][2];
-		ri[0] = r[i][0];
-		ri[1] = r[i][1];
-		ri[2] = r[i][2];
-//		printf("%d %d %d %d %d %d \n", bx,by,bz,boxid[i][0],boxid[i][1],boxid[i][2]);
+		for (fx=0; fx<3; fx++){
+			b[fx] = boxid[i][fx];
+			ri[fx] = r[i][fx];
+		}
 		for (dbx=0; dbx<3; dbx++){
-			pbx = pbc_box(bx+dbx-1);
+			pbx = pbc_box(b[0]+dbx-1);
 			for (dby=0; dby<3; dby++){
-				pby = pbc_box(by+dby-1);
+				pby = pbc_box(b[1]+dby-1);
 				for (dbz=0; dbz<3; dbz++){
-					pbz = pbc_box(bz+dbz-1);
+					pbz = pbc_box(b[2]+dbz-1);
 					for (j=1; j<(box[pbx][pby][pbz][0]+1); j++){
 						nb_j = box[pbx][pby][pbz][j];
-//						printf("j: %d \t",j);
 						if (nb_j != i) {
+//*******PP*******
 							rel_c2 = 0.0;
 							for (k=0; k<3; k++) {
-								dummy = ri[k]-r[nb_j][k];
+								rj[k] = r[nb_j][k];
+								dummy = ri[k]-rj[k];
 								rel[k] = dummy - floor(dummy/newR)*newR;
 								rel_c2 += rel[k]*rel[k];
 							}
@@ -283,16 +280,44 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 							//	if (rel_c2 < 1e-6) {rel_c2 = 1e-6; printf("small number!");}
 								f[i][k] += rel[k]/pow(rel_c2,1.5);
 							}
-///							min = (min > rel_c2)? rel_c2 : min;
+//*******PM*******
+							//cancel nb_j on neighboring grid point for PM
+							for (jx=0; jx<2; jx++){
+								for (jy=0; jy<2; jy++){
+									for (jz=0; jz<2; jz++){
+										//get to each neighboring gird point
+										ijx = pbc_box(b[0]+jx);
+										ijy = pbc_box(b[1]+jy);
+										ijz = pbc_box(b[2]+jz);
+										jrel2 = pow((rj[0]-ijx*hx),2.0)+pow((rj[1]-ijy*hx),2.0)+pow((rj[2]-ijz*hx),2.0);
+										field[0][ijx][ijy][ijz] -= (ijx*hx-rj[0])/pow(jrel2,1.5);
+										field[1][ijx][ijy][ijz] -= (ijy*hx-rj[1])/pow(jrel2,1.5);	
+										field[2][ijx][ijy][ijz] -= (ijz*hx-rj[2])/pow(jrel2,1.5);	
+									}
+								}
+							}
 						}
 					}
 				}
 			}
 		}
-///		min_t = (min_t > min) ? min : min_t;
+		//PM
+		for (dbx=0; dbx<2; dbx++){
+			pbx = pbc_box(b[0]+dbx);
+			for (dby=0; dby<2; dby++){
+				pby = pbc_box(b[1]+dby);
+				for (dbz=0; dbz<2; dbz++){
+					pbz = pbc_box(b[2]+dbz);
+					for (fx=0; fx<3; fx++){
+						f[i][fx] += w[i][dbx][dby][dbz]*field[fx][dbx][dby][dbz];
+					}
+				}
+			}
+		}
+
 	}
 	printf("getforce finish\n");
-///	printf("r_min = %11.3f \n",min_t);
+
 /********** full interaction version	
 	//use openmp here with (rel[3],rel_c,fij) private
 	#pragma omp parallel for private(i,j,k,rel,rel_c,fij)
@@ -330,7 +355,7 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][bo
 		}
 	}
 	update_box(r,box,boxid,rho,w);
-	getForce(f,r,box,boxid,rho);
+	getForce(f,r,box,boxid,rho,w);
 	for (i=0; i<N; i++) {
 		for (j=0; j<3; j++) {
 			v[i][j] += f[i][j]*hdtm;
