@@ -8,3 +8,4 @@
 #executable file for this project:
 d
 *.o
+cudatest
