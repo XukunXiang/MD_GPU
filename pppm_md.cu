@@ -12,6 +12,7 @@
 #include <omp.h>
 //#include <fftw3.h>
 #include "cuda.h"
+#include <cufft.h>
 
 //simulation setup
 #define N 10					//number of particles
@@ -241,6 +242,8 @@ void getGlobalField(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 }
 */
 
+//	getGlobalField_cufft(rho,field);
+
 void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn],double w[N][2][2][2]) {
 	int i,j,k,fx,b[3],dbx,dby,dbz,pbx,pby,pbz,nb_j;
 	double rel[3], rel_c, rel_c2, fij[3], field[3][bn][bn][bn], ri[3], rj[3];
@@ -248,7 +251,11 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 	int jx,jy,jz,ijx,ijy,ijz;
 	double jrel2;
 
-//	getGlobalField(rho,field);
+//	getGlobalField(rho,field); 
+//******[GPU] cufft******
+//	getGlobalField_cufft(rho,field);
+//**********
+	
 
 //	#pragma omp parallel for private(bx,by,bz,pbx,pby,pbz,dbx,dby,dbz,nb_j,rel_c2,j,k,dummy)
 	for (i=0; i<N; i++) {
@@ -315,29 +322,6 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 	}
 	printf("getforce finish\n");
 
-/********** full interaction version	
-	//use openmp here with (rel[3],rel_c,fij) private
-	#pragma omp parallel for private(i,j,k,rel,rel_c,fij)
-	for (j=0; j<(N-1); j++) {
-		for (i=j+1; i<N; i++) {
-			rel_c = 0.0;
-			for (k=0; k<3; k++) {
-				rel[k] = r[i][k] - r[j][k];
-				rel[k] -= rint(rel[k]/newR)*newR;
-				rel_c += pow(rel[k], 2.0 );
-			}
-			rel_c = pow(rel_c, -1.5 );
-			for (k=0; k<3; k++) {
-				fij[k] = rel[k]*rel_c;
-				//atomic operation here
-				#pragma omp atomic
-				f[j][k] -= fij[k];
-				#pragma omp atomic
-				f[i][k] += fij[k];
-			}
-		}
-	}
-*********/
 }
 
 void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn],double w[N][2][2][2], double dt){
@@ -361,6 +345,31 @@ void verlet(double r[N][3],double v[N][3],double f[N][3], int box[bn][bn][bn][bo
 	printf("update v finish\n");
 }
 
+void inputbinning(double r[N][3],double rtest[N][3]){
+  //STEP 1: ALLOCATE
+  double *r_d;
+  int N3size = sizeof(double)*N*3;
+  cudaMalloc((void **) &r_d, N3size);
+  
+  //STEP 2: TRANSFER
+  cudaMemcpy(r_d, r, N3size, cudaMemcpyHostToDevice);
+
+  //STEP 3: SET UP
+  dim3 blockSize(10,1,1);
+  dim3 gridSize(1,3,1);
+
+  //STEP 4: RUN
+  theKernel<<<gridSize, blockSize>>>(r_d);
+  
+  //STEP 5: TRANSFER
+  printGrid(r);
+  cudaMemcpy(rtest, r_d, N3size, cudaMemcpyDeviceToHost);
+  printf("--------------------\n");
+  printGrid(r);
+  printf("--------------------\n");
+  printGrid(rtest);
+}
+
 int main() {
 	double R[N][3] = {{0.0}}, V[N][3] = {{0.0}}, F[N][3]={{0.0}};
 	int box[bn][bn][bn][boxcap]; // need to go to class or dynamic array later 
@@ -369,23 +378,13 @@ int main() {
 	int i, iter;
 	int numb, check;
 	double dt = 2e-4, realt = 0.0;
-	int plotstride = 20;
 	double r0,r1,r2,rel0,rel1,rel2;
-	double KE,PE;
 	double rho[bn][bn][bn], w[N][2][2][2];
-	FILE *RVo,*To,*initR;
-
-	RVo = fopen("./RandV.dat","w+");
-	To = fopen("./time.dat","w+");
-	initR = fopen("./initR.xyz","w+");
 
 	// Initialization in a sphere
 	srand(time(NULL));
 	numb = 0;
 	while (numb < N) {
-//		r0 = newR*(2*getrand()-1);
-//		r1 = newR*(2*getrand()-1);
-//		r2 = newR*(2*getrand()-1);
 		r0 = newR*getrand();
 		r1 = newR*getrand();
 		r2 = newR*getrand();
@@ -410,66 +409,19 @@ int main() {
 		}
 	}
 	
-	//output initR for check
-//	fprintf(initR,"%d \n", N);
-//	fprintf(initR,"%d \n", 0);
-//	for (i = 0; i<N; i++) {
-//		fprintf(initR,"%5d %11.3f \t %11.3f \t %11.3f \n",1,R[i][0],R[i][1],R[i][2]);
-//	}
-
 	for (iter = 0; iter< Ntime; iter++) {
 		printf("iter %d: \n", iter);
 		verlet(R,V,F,box,boxid,rho,w,dt);
 		realt += dt;
 		printf("update realtime \n");
-/*
-//output
-		if ((iter % plotstride) == 1) {		
-			PE = getPE(R);
-			KE = getKE(V);
-//			printf("%11.5f \t %11.5f \t %11.5f \t %11.5f \n", realt, PE, KE, PE+KE);
-			//position output
-			fprintf(initR,"%d \n", N);
-			fprintf(initR,"%d \n", iter);
-			for (i = 0; i<N; i++) {
-				fprintf(initR,"%5d %11.3f \t %11.3f \t %11.3f \n",1,R[i][0],R[i][1],R[i][2]);
-			}
-		}
-
-		if (iter == 200) dt = 5.0;
-		if (iter == 500) dt = 15.0;
-		if (iter == 700) dt = 50.0;
-		if (iter == 2000) plotstride = 100;
-*/
 	}
 
-//******GPU******
-  //STEP 1: ALLOCATE
-  double *r_d;
-  int size = sizeof(float)*N*3;
-  cudaMalloc((void **) &r_d, size);
-  
-  //STEP 2: TRANSFER
-  cudaMemcpy(r_d, R, size, cudaMemcpyHostToDevice);
+//******[GPU] Input binning for local correct ******
 
-  //STEP 3: SET UP
-  dim3 blockSize(10,1,1);
-  dim3 gridSize(1,3,1);
-
-  //STEP 4: RUN
-  theKernel<<<gridSize, blockSize>>>(r_d);
-  
-  //STEP 5: TRANSFER
-  printGrid(R);
-  cudaMemcpy(R, r_d, size, cudaMemcpyDeviceToHost);
-  printf("--------------------\n");
-  printGrid(R);
+	double rtest[N][3]={{0.0}};
+	inputbinning(R,rtest);
 
 //**********
 
-
-//	fclose(RVo);
-//	fclose(To);
-//	fclose(initR);
 
 }

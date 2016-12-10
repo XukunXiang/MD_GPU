@@ -20,7 +20,7 @@
 
 //PPPM setup
 #define bn 10					//number of boxes per direction
-#define boxcap 500		//temporary cap for particles in one box; update to class later
+#define boxcap 50		//temporary cap for particles in one box; update to class later
 #define hx 2.0E5			//[real space] cell size newR/bn
 #define hx3 8.0E15		//hx^3 as the cell volume
 #define grid_offset 5	//move the center of grid to 0 to match the particles
@@ -31,7 +31,7 @@
 #define vc 5.85e3			//speed of light
 #define PI 3.141592653589793	//  \pi
 
-double inline getrand(){ return (double)rand()/(double)RAND_MAX; }
+double getrand(){ return (double)rand()/(double)RAND_MAX; }
 
 /*	
 double PBC(double r1) {
@@ -81,7 +81,7 @@ double getKE(double v[N][3]){
 	return KE_c;
 }
 
-int inline pbc_box(int point){
+int pbc_box(int point){
 	int pb;
 	if (point < 0 ) {
 		pb = point + bn;
@@ -140,7 +140,7 @@ void update_box(double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],doub
 			basis[j] = r[i][j] - realb[j]*hx;
 		}
 //		printf("\n");
-		num = box[b[0]][b[1]][b[2]][0]+1;
+		num = box[b[0]][b[1]][b[2]][0] + 1;
 		box[b[0]][b[1]][b[2]][0] = num;
 		box[b[0]][b[1]][b[2]][num] = i;
 		charge_assign(b,basis,rho,i,w);	
@@ -162,7 +162,6 @@ void setupKpoints(double kpoints[bn]){
 void getGlobalField(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 	fftw_complex 	*f_fft_result, *b_fft_in_x, *b_fft_in_y, *b_fft_in_z;
 	fftw_plan			plan_forward, plan_backward_x, plan_backward_y, plan_backward_z;
-	double outputcheck[bn][bn][bn];
 	double kpoints[bn];
 	int i,j,k,idx;
 	double fr,fi; // for real part and imaginary part 
@@ -225,11 +224,11 @@ void getGlobalField(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
   fftw_execute( plan_backward_z );
 /*
 	for(i=0; i<bn; i++) {
-		fprintf(stdout, "result[%d]=%11.3f \n", i, field[0][0][0][i]);
+		printf("result[%d]=%11.3f \n", i, field[0][0][0][i]);
 	}
 */
 //	printf("start free fftw\n");
-	//free memory
+//	//free memory
 //	fftw_destroy_plan( plan_forward );
 //	printf("finish free plan_forward\n");
 //	fftw_destroy_plan( plan_backward_x );
@@ -376,11 +375,11 @@ int main() {
 	double r0,r1,r2,rel0,rel1,rel2;
 	double KE,PE;
 	double rho[bn][bn][bn], w[N][2][2][2];
-	FILE *RVo,*To,*initR;
-
-	RVo = fopen("./RandV.dat","w+");
-	To = fopen("./time.dat","w+");
-	initR = fopen("./initR.xyz","w+");
+//	FILE *RVo,*To,*initR;
+//
+//	RVo = fopen("./RandV.dat","w+");
+//	To = fopen("./time.dat","w+");
+//	initR = fopen("./initR.xyz","w+");
 
 	// Initialization in a sphere
 	srand(time(NULL));
@@ -447,9 +446,10 @@ int main() {
 	}
 
 
-	fclose(RVo);
-	fclose(To);
-	fclose(initR);
+//	fclose(RVo);
+//	fclose(To);
+//	fclose(initR);
 
-//	return 0;
+	return 0;
+
 }
