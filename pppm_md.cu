@@ -15,17 +15,17 @@
 #include <cufft.h>
 
 //simulation setup
-#define N 500					//number of particles
+#define N 5000					//number of particles
 #define Ntime 1 
 #define newR 2.0E6		//size of the simulation box ~ 100 um
 #define cutoff 200.0	//lower limit of the initial distance between electrons ~ 100 nm
 
 //PPPM setup
-#define bn 100					//number of boxes per direction
-#define boxcap 5		//temporary cap for particles in one box; update to class later
-#define hx 2.0E4			//[real space] cell size newR/bn
-#define hx3 8.0E12		//hx^3 as the cell volume
-#define bn3 1000000			// total grid/mesh point number
+#define bn 10					//number of boxes per direction
+#define boxcap 50		//temporary cap for particles in one box; update to class later
+#define hx 2.0E5			//[real space] cell size newR/bn
+#define hx3 8.0E15		//hx^3 as the cell volume
+#define bn3 1000			// total grid/mesh point number
 
 //parameters
 #define m 5.4858e-4		//elelctron mass
@@ -48,6 +48,8 @@ void printGrid(double a[N][3]){
     printf("\n");
   }
 }
+
+
 //****************
 double getPE(double r[N][3]){
 	int i,j,k;
@@ -156,20 +158,51 @@ void setupKpoints(float kpoints[bn]){
 	}
 }
 
+__global__ void OutputToInput(cufftComplex *f_fft_result,cufftComplex *b_fft_in_x,cufftComplex *b_fft_in_y,cufftComplex *b_fft_in_z,float *d_kpoints) {
+	int tx = blockIdx.x*blockDim.x + threadIdx.x;
+	int ty = blockIdx.y*blockDim.y + threadIdx.y;
+	int tz = blockIdx.z*blockDim.z + threadIdx.z;
+	__shared__ float ks[bn];
+	cufftComplex in;
+	float k2i,kx,ky,kz;
+	int i,j,k;
+	int b3 = bn/2+1;
+
+	for (i=0; i<bn; i++){
+		ks[i] = d_kpoints[i];
+	}
+	kx = ks[tx];
+	ky = ks[ty];
+	kz = ks[tz];
+	int idx = 2*(tz + ty*b3 + tx*bn*b3);
+	if(tx==0 && ty ==0 && tz==0) {
+		k2i = 1.0;
+	}
+	else{
+		k2i = 1.0/(kx*kx+ky*ky+kz*kz);
+	}
+	in.x = f_fft_result[idx].x;
+	in.y = f_fft_result[idx].y;
+
+	b_fft_in_x[idx].x = kx*k2i*in.y;
+	b_fft_in_x[idx].y = -kx*k2i*in.x;
+	b_fft_in_y[idx].x = ky*k2i*in.y;
+	b_fft_in_y[idx].y = -ky*k2i*in.x;
+	b_fft_in_z[idx].x = kz*k2i*in.y;
+	b_fft_in_z[idx].y = -kz*k2i*in.x;	
+
+}
+
 void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
-//	fftw_complex 	*f_fft_result, *b_fft_in_x, *b_fft_in_y, *b_fft_in_z;
-//	fftw_plan			plan_forward, plan_backward_x, plan_backward_y, plan_backward_z;
-	float h_input[bn][bn][bn],h_output[bn][bn][bn];
+	float h_input[bn][bn][bn],h_output[3][bn][bn][bn];
 	float kpoints[bn];
 	int b_complex = bn*bn*((int)bn/2+1);
 
-	cufftReal *d_input,*d_output;
+	cufftReal *d_input,*d_output_x,*d_output_y,*d_output_z,*d_kpoints;
 	cufftComplex 	*f_fft_result, *b_fft_in_x, *b_fft_in_y, *b_fft_in_z;
 	cufftHandle plan_forward, plan_backward_x, plan_backward_y, plan_backward_z;
 
 	int i,j,k,idx;
-//	double fr,fi; // for real part and imaginary part 
-	float kx,ky,kz,kx2,ky2,kz2,k2i;
 	
 	for(i=0; i<bn; i++){
 		for(j=0; j<bn; j++){
@@ -179,6 +212,9 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 		}
 	}
 
+	printf("setting up K-points...\n");
+	setupKpoints(kpoints);
+
 	printf("cuFFT is starting...\n");
 	for(i=0; i<bn; i++){
 		printf("%11.3f ",h_input[0][0][i]);
@@ -187,13 +223,18 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 
 	//Allocate device momory
 	cudaMalloc((void**)&d_input, bn3*sizeof(cufftReal));
-	cudaMalloc((void**)&d_output, bn3*sizeof(cufftReal));
+	cudaMalloc((void**)&d_output_x, bn3*sizeof(cufftReal));
+	cudaMalloc((void**)&d_output_y, bn3*sizeof(cufftReal));
+	cudaMalloc((void**)&d_output_z, bn3*sizeof(cufftReal));
 	cudaMalloc((void**)&f_fft_result, b_complex*sizeof(cufftComplex));
 	cudaMalloc((void**)&b_fft_in_x, b_complex*sizeof(cufftComplex));
 	cudaMalloc((void**)&b_fft_in_y, b_complex*sizeof(cufftComplex));
 	cudaMalloc((void**)&b_fft_in_z, b_complex*sizeof(cufftComplex));
+	cudaMalloc((void**)&d_kpoints, bn*sizeof(cufftReal));
+	
 	//Copy host momory to device
 	cudaMemcpy(d_input, &h_input[0][0][0], bn3, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_kpoints, &kpoints[0], bn, cudaMemcpyHostToDevice);
 	
 	//cuFFT plan
 	cufftPlan3d(&plan_forward, bn, bn, bn, CUFFT_R2C);
@@ -207,14 +248,20 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 
 	//transforming output_of_fft to input_of_ifft
 	printf("output of fft ==> input of ifft\n");
-
+	dim3 DimGrid(bn,1,1);
+	dim3 DimBlock(1,bn,bn/2+1);
+	OutputToInput<<<DimGrid,DimBlock>>>(f_fft_result,b_fft_in_x,b_fft_in_y,b_fft_in_z,d_kpoints);
 
 	printf("backward fft is starting...\n");
 	//ifft
-	cufftExecC2R(plan_backward_x, f_fft_result, d_output);
+	cufftExecC2R(plan_backward_x, b_fft_in_x, d_output_x);
+	cufftExecC2R(plan_backward_y, b_fft_in_y, d_output_y);
+	cufftExecC2R(plan_backward_z, b_fft_in_z, d_output_z);
 
 	//Copy device memory to host
-	cudaMemcpy(&h_output[0][0][0], d_output, bn3, cudaMemcpyDeviceToHost);
+	cudaMemcpy(&h_output[0][0][0][0], d_output_x, bn3, cudaMemcpyDeviceToHost);
+	cudaMemcpy(&h_output[1][0][0][0], d_output_y, bn3, cudaMemcpyDeviceToHost);
+	cudaMemcpy(&h_output[2][0][0][0], d_output_z, bn3, cudaMemcpyDeviceToHost);
 
 
 	for(i=0; i<bn; i++){
@@ -225,7 +272,9 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 	for(i=0; i<bn; i++){
 		for(j=0; j<bn; j++){
 			for(k=0; k<bn; k++){
-				field[0][i][j][k] = (double)h_output[i][j][k];
+				field[0][i][j][k] = (double)h_output[0][i][j][k];
+				field[1][i][j][k] = (double)h_output[1][i][j][k];
+				field[2][i][j][k] = (double)h_output[2][i][j][k];
 			}
 		}
 	}
@@ -243,76 +292,7 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 //	free(b_fft_in_y);
 //	free(b_fft_in_z);
 
-//	plan_forward  	= fftw_plan_dft_r2c_3d(bn,bn,bn,&rho[0][0][0],f_fft_result,FFTW_ESTIMATE );
-//	plan_backward_x = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_x,&field[0][0][0][0],FFTW_ESTIMATE );
-//	plan_backward_y = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_y,&field[1][0][0][0],FFTW_ESTIMATE );
-//	plan_backward_z = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_z,&field[2][0][0][0],FFTW_ESTIMATE );
-//
-//	printf("setupPPPM\n");
-//	
-////	for(i=0; i<bn; i++) {
-////		fprintf(stdout, "rho[%d]=%11.3f \n", i, rho[0][0][i]);
-//	}
-//
-//	
-//	fftw_execute( plan_forward );
-//	printf("finish forward\n");
-//
-//	setupKpoints(kpoints);//since newR =2E6, k might be too small
-//	printf("setupKpoints\n");
-//	for (i=0; i< bn; i++){
-//		kx =  kpoints[i];
-//		kx2 = kx*kx;
-//		for (j=0; j<bn; j++){
-//			ky = kpoints[j];
-//			ky2 = ky*ky;
-//			for (k=0; k<(bn/2+1); k++) {
-//				kz = kpoints[k];
-//				kz2 = kz*kz;
-//				idx = 2*(k+(bn/2+1)*j+bn*(bn/2+1)*i);
-//				if (i==0 && j==0 && k==0) {
-//					k2i = 1.0;
-//				}
-//				else {
-//					k2i = 1/(kx2+ky2+kz2);
-//				}
-//				idx = 2*(bn*(bn/2+1)*i + (bn/2+1)*j + k);
-//				fr = f_fft_result[idx][0];
-//				fi = f_fft_result[idx][1];
-//				
-//				b_fft_in_x[idx][0] = kx*k2i*fi;
-//				b_fft_in_x[idx][1] = -kx*k2i*fr;
-//				b_fft_in_y[idx][0] = ky*k2i*fi;
-//				b_fft_in_y[idx][1] = -ky*k2i*fr;
-//				b_fft_in_z[idx][0] = kz*k2i*fi;
-//				b_fft_in_z[idx][1] = -kz*k2i*fr;
-//			}
-//		}
-//	}
-//	printf("output==>input\n");
-//  fftw_execute( plan_backward_x );
-//  fftw_execute( plan_backward_y );
-//  fftw_execute( plan_backward_z );
-//
-////	for(i=0; i<bn; i++) {
-////		fprintf(stdout, "result[%d]=%11.3f \n", i, field[0][0][0][i]);
-//	}
-//
-////	printf("start free fftw\n");
-//	//free memory
-////	fftw_destroy_plan( plan_forward );
-////	printf("finish free plan_forward\n");
-////	fftw_destroy_plan( plan_backward_x );
-////	fftw_destroy_plan( plan_backward_y );
-////	fftw_destroy_plan( plan_backward_z );
-////	
-////	fftw_free( f_fft_result );
-////	fftw_free( b_fft_in_x );
-////	fftw_free( b_fft_in_y );
-////	fftw_free( b_fft_in_z );
-////	printf("finish free\n");
 }
-
 
 void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn],double w[N][2][2][2]) {
 	int i,j,k,fx,b[3],dbx,dby,dbz,pbx,pby,pbz,nb_j;
@@ -425,7 +405,7 @@ void inputbinning(double r[N][3],double rtest[N][3]){
   cudaMemcpy(r_d, r, N3size, cudaMemcpyHostToDevice);
 
   //STEP 3: SET UP
-  dim3 blockSize(10,1,1);
+  dim3 blockSize(N,1,1);
   dim3 gridSize(1,3,1);
 
   //STEP 4: RUN
