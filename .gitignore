@@ -9,3 +9,5 @@
 d
 *.o
 cudatest
+SimplecuFFT
+

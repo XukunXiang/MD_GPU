@@ -15,18 +15,17 @@
 #include <cufft.h>
 
 //simulation setup
-#define N 10					//number of particles
+#define N 500					//number of particles
 #define Ntime 1 
 #define newR 2.0E6		//size of the simulation box ~ 100 um
 #define cutoff 200.0	//lower limit of the initial distance between electrons ~ 100 nm
 
 //PPPM setup
-#define bn 10					//number of boxes per direction
-#define boxcap 50		//temporary cap for particles in one box; update to class later
-#define hx 2.0E5			//[real space] cell size newR/bn
-#define hx3 8.0E15		//hx^3 as the cell volume
-#define grid_offset 5	//move the center of grid to 0 to match the particles
-#define bn3 1000			// total grid/mesh point number
+#define bn 100					//number of boxes per direction
+#define boxcap 5		//temporary cap for particles in one box; update to class later
+#define hx 2.0E4			//[real space] cell size newR/bn
+#define hx3 8.0E12		//hx^3 as the cell volume
+#define bn3 1000000			// total grid/mesh point number
 
 //parameters
 #define m 5.4858e-4		//elelctron mass
@@ -145,104 +144,175 @@ void update_box(double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],doub
 	}
 }
 
-void setupKpoints(double kpoints[bn]){
-	double k;
+void setupKpoints(float kpoints[bn]){
+	float k;
 	int i;
-	double nyquist = (double)bn/newR/2.0;
+	float nyquist = (float)bn/newR/2.0;
 	for (i=0; i<(bn/2+1); i++){
-		kpoints[i] = 2*PI*(double)i/(double)(bn/2)*nyquist;
+		kpoints[i] = 2*PI*(float)i/(float)(bn/2)*nyquist;
 		if (i!=(bn/2) && i!=0) {
 			kpoints[bn-i] = kpoints[i];
 		}
 	}
 }
-/*
-void getGlobalField(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
-	fftw_complex 	*f_fft_result, *b_fft_in_x, *b_fft_in_y, *b_fft_in_z;
-	fftw_plan			plan_forward, plan_backward_x, plan_backward_y, plan_backward_z;
-	double outputcheck[bn][bn][bn];
-	double kpoints[bn];
+
+void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
+//	fftw_complex 	*f_fft_result, *b_fft_in_x, *b_fft_in_y, *b_fft_in_z;
+//	fftw_plan			plan_forward, plan_backward_x, plan_backward_y, plan_backward_z;
+	float h_input[bn][bn][bn],h_output[bn][bn][bn];
+	float kpoints[bn];
+	int b_complex = bn*bn*((int)bn/2+1);
+
+	cufftReal *d_input,*d_output;
+	cufftComplex 	*f_fft_result, *b_fft_in_x, *b_fft_in_y, *b_fft_in_z;
+	cufftHandle plan_forward, plan_backward_x, plan_backward_y, plan_backward_z;
+
 	int i,j,k,idx;
-	double fr,fi; // for real part and imaginary part 
-	double kx,ky,kz,kx2,ky2,kz2,k2i;
-
-	f_fft_result  = ( fftw_complex* ) fftw_malloc( sizeof( fftw_complex ) * bn3 );
-	b_fft_in_x 		= ( fftw_complex* ) fftw_malloc( sizeof( fftw_complex ) * bn3 );
-	b_fft_in_y 		= ( fftw_complex* ) fftw_malloc( sizeof( fftw_complex ) * bn3 );
-	b_fft_in_z 		= ( fftw_complex* ) fftw_malloc( sizeof( fftw_complex ) * bn3 );
-
-	plan_forward  	= fftw_plan_dft_r2c_3d(bn,bn,bn,&rho[0][0][0],f_fft_result,FFTW_ESTIMATE );
-	plan_backward_x = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_x,&field[0][0][0][0],FFTW_ESTIMATE );
-	plan_backward_y = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_y,&field[1][0][0][0],FFTW_ESTIMATE );
-	plan_backward_z = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_z,&field[2][0][0][0],FFTW_ESTIMATE );
-
-	printf("setupPPPM\n");
+//	double fr,fi; // for real part and imaginary part 
+	float kx,ky,kz,kx2,ky2,kz2,k2i;
 	
-//	for(i=0; i<bn; i++) {
-//		fprintf(stdout, "rho[%d]=%11.3f \n", i, rho[0][0][i]);
-	}
-
-	
-	fftw_execute( plan_forward );
-	printf("finish forward\n");
-
-	setupKpoints(kpoints);//since newR =2E6, k might be too small
-	printf("setupKpoints\n");
-	for (i=0; i< bn; i++){
-		kx =  kpoints[i];
-		kx2 = kx*kx;
-		for (j=0; j<bn; j++){
-			ky = kpoints[j];
-			ky2 = ky*ky;
-			for (k=0; k<(bn/2+1); k++) {
-				kz = kpoints[k];
-				kz2 = kz*kz;
-				idx = 2*(k+(bn/2+1)*j+bn*(bn/2+1)*i);
-				if (i==0 && j==0 && k==0) {
-					k2i = 1.0;
-				}
-				else {
-					k2i = 1/(kx2+ky2+kz2);
-				}
-				idx = 2*(bn*(bn/2+1)*i + (bn/2+1)*j + k);
-				fr = f_fft_result[idx][0];
-				fi = f_fft_result[idx][1];
-				
-				b_fft_in_x[idx][0] = kx*k2i*fi;
-				b_fft_in_x[idx][1] = -kx*k2i*fr;
-				b_fft_in_y[idx][0] = ky*k2i*fi;
-				b_fft_in_y[idx][1] = -ky*k2i*fr;
-				b_fft_in_z[idx][0] = kz*k2i*fi;
-				b_fft_in_z[idx][1] = -kz*k2i*fr;
+	for(i=0; i<bn; i++){
+		for(j=0; j<bn; j++){
+			for(k=0; k<bn; k++){
+				h_input[i][j][k] = rho[i][j][k];
 			}
 		}
 	}
-	printf("output==>input\n");
-  fftw_execute( plan_backward_x );
-  fftw_execute( plan_backward_y );
-  fftw_execute( plan_backward_z );
 
-//	for(i=0; i<bn; i++) {
-//		fprintf(stdout, "result[%d]=%11.3f \n", i, field[0][0][0][i]);
+	printf("cuFFT is starting...\n");
+	for(i=0; i<bn; i++){
+		printf("%11.3f ",h_input[0][0][i]);
+	}
+	printf("\n");
+
+	//Allocate device momory
+	cudaMalloc((void**)&d_input, bn3*sizeof(cufftReal));
+	cudaMalloc((void**)&d_output, bn3*sizeof(cufftReal));
+	cudaMalloc((void**)&f_fft_result, b_complex*sizeof(cufftComplex));
+	cudaMalloc((void**)&b_fft_in_x, b_complex*sizeof(cufftComplex));
+	cudaMalloc((void**)&b_fft_in_y, b_complex*sizeof(cufftComplex));
+	cudaMalloc((void**)&b_fft_in_z, b_complex*sizeof(cufftComplex));
+	//Copy host momory to device
+	cudaMemcpy(d_input, &h_input[0][0][0], bn3, cudaMemcpyHostToDevice);
+	
+	//cuFFT plan
+	cufftPlan3d(&plan_forward, bn, bn, bn, CUFFT_R2C);
+	cufftPlan3d(&plan_backward_x, bn, bn, bn, CUFFT_C2R);
+	cufftPlan3d(&plan_backward_y, bn, bn, bn, CUFFT_C2R);
+	cufftPlan3d(&plan_backward_z, bn, bn, bn, CUFFT_C2R);
+
+	printf("forward fft is starting...\n");
+	//forward fft
+	cufftExecR2C(plan_forward, d_input, f_fft_result);
+
+	//transforming output_of_fft to input_of_ifft
+	printf("output of fft ==> input of ifft\n");
+
+
+	printf("backward fft is starting...\n");
+	//ifft
+	cufftExecC2R(plan_backward_x, f_fft_result, d_output);
+
+	//Copy device memory to host
+	cudaMemcpy(&h_output[0][0][0], d_output, bn3, cudaMemcpyDeviceToHost);
+
+
+	for(i=0; i<bn; i++){
+		printf("%11.3f ",h_output[0][0][i]);
+	}
+	printf("\n");
+	
+	for(i=0; i<bn; i++){
+		for(j=0; j<bn; j++){
+			for(k=0; k<bn; k++){
+				field[0][i][j][k] = (double)h_output[i][j][k];
+			}
+		}
 	}
 
-//	printf("start free fftw\n");
-	//free memory
-//	fftw_destroy_plan( plan_forward );
-//	printf("finish free plan_forward\n");
-//	fftw_destroy_plan( plan_backward_x );
-//	fftw_destroy_plan( plan_backward_y );
-//	fftw_destroy_plan( plan_backward_z );
-//	
-//	fftw_free( f_fft_result );
-//	fftw_free( b_fft_in_x );
-//	fftw_free( b_fft_in_y );
-//	fftw_free( b_fft_in_z );
-//	printf("finish free\n");
-}
-*/
+	//Destory cuFFT context
+//	cufftDestroy(plan_forward);
+//	cufftDestroy(plan_backward_x);
+//	cufftDestroy(plan_backward_y);
+//	cufftDestroy(plan_backward_z);
+//
+//	free(d_input);
+//	free(d_output);
+//	free(f_fft_result);
+//	free(b_fft_in_x);
+//	free(b_fft_in_y);
+//	free(b_fft_in_z);
 
-//	getGlobalField_cufft(rho,field);
+//	plan_forward  	= fftw_plan_dft_r2c_3d(bn,bn,bn,&rho[0][0][0],f_fft_result,FFTW_ESTIMATE );
+//	plan_backward_x = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_x,&field[0][0][0][0],FFTW_ESTIMATE );
+//	plan_backward_y = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_y,&field[1][0][0][0],FFTW_ESTIMATE );
+//	plan_backward_z = fftw_plan_dft_c2r_3d(bn,bn,bn,b_fft_in_z,&field[2][0][0][0],FFTW_ESTIMATE );
+//
+//	printf("setupPPPM\n");
+//	
+////	for(i=0; i<bn; i++) {
+////		fprintf(stdout, "rho[%d]=%11.3f \n", i, rho[0][0][i]);
+//	}
+//
+//	
+//	fftw_execute( plan_forward );
+//	printf("finish forward\n");
+//
+//	setupKpoints(kpoints);//since newR =2E6, k might be too small
+//	printf("setupKpoints\n");
+//	for (i=0; i< bn; i++){
+//		kx =  kpoints[i];
+//		kx2 = kx*kx;
+//		for (j=0; j<bn; j++){
+//			ky = kpoints[j];
+//			ky2 = ky*ky;
+//			for (k=0; k<(bn/2+1); k++) {
+//				kz = kpoints[k];
+//				kz2 = kz*kz;
+//				idx = 2*(k+(bn/2+1)*j+bn*(bn/2+1)*i);
+//				if (i==0 && j==0 && k==0) {
+//					k2i = 1.0;
+//				}
+//				else {
+//					k2i = 1/(kx2+ky2+kz2);
+//				}
+//				idx = 2*(bn*(bn/2+1)*i + (bn/2+1)*j + k);
+//				fr = f_fft_result[idx][0];
+//				fi = f_fft_result[idx][1];
+//				
+//				b_fft_in_x[idx][0] = kx*k2i*fi;
+//				b_fft_in_x[idx][1] = -kx*k2i*fr;
+//				b_fft_in_y[idx][0] = ky*k2i*fi;
+//				b_fft_in_y[idx][1] = -ky*k2i*fr;
+//				b_fft_in_z[idx][0] = kz*k2i*fi;
+//				b_fft_in_z[idx][1] = -kz*k2i*fr;
+//			}
+//		}
+//	}
+//	printf("output==>input\n");
+//  fftw_execute( plan_backward_x );
+//  fftw_execute( plan_backward_y );
+//  fftw_execute( plan_backward_z );
+//
+////	for(i=0; i<bn; i++) {
+////		fprintf(stdout, "result[%d]=%11.3f \n", i, field[0][0][0][i]);
+//	}
+//
+////	printf("start free fftw\n");
+//	//free memory
+////	fftw_destroy_plan( plan_forward );
+////	printf("finish free plan_forward\n");
+////	fftw_destroy_plan( plan_backward_x );
+////	fftw_destroy_plan( plan_backward_y );
+////	fftw_destroy_plan( plan_backward_z );
+////	
+////	fftw_free( f_fft_result );
+////	fftw_free( b_fft_in_x );
+////	fftw_free( b_fft_in_y );
+////	fftw_free( b_fft_in_z );
+////	printf("finish free\n");
+}
+
 
 void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int boxid[N][3],double rho[bn][bn][bn],double w[N][2][2][2]) {
 	int i,j,k,fx,b[3],dbx,dby,dbz,pbx,pby,pbz,nb_j;
@@ -253,7 +323,7 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 
 //	getGlobalField(rho,field); 
 //******[GPU] cufft******
-//	getGlobalField_cufft(rho,field);
+	getGlobalField_cufft(rho,field);
 //**********
 	
 
@@ -418,8 +488,8 @@ int main() {
 
 //******[GPU] Input binning for local correct ******
 
-	double rtest[N][3]={{0.0}};
-	inputbinning(R,rtest);
+//	double rtest[N][3]={{0.0}};
+//	inputbinning(R,rtest);
 
 //**********
 
