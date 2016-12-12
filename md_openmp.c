@@ -381,6 +381,9 @@ int main() {
 //	To = fopen("./time.dat","w+");
 //	initR = fopen("./initR.xyz","w+");
 
+	clock_t cpu_startTime, cpu_endTime;
+	double cpu_ElapseTime = 0.0;
+	
 	// Initialization in a sphere
 	srand(time(NULL));
 	numb = 0;
@@ -420,10 +423,17 @@ int main() {
 //	}
 
 	for (iter = 0; iter< Ntime; iter++) {
+		
+		cpu_startTime = clock();
+		
 		printf("iter %d: \n", iter);
 		verlet(R,V,F,box,boxid,rho,w,dt);
 		realt += dt;
 		printf("update realtime \n");
+	
+		cpu_endTime = clock();
+		cpu_ElapseTime = ((double)(cpu_endTime - cpu_startTime)/CLOCKS_PER_SEC)*1000.0;
+		printf("The cpu calculation takes: %.3f ms\n",cpu_ElapseTime);
 /*
 //output
 		if ((iter % plotstride) == 1) {		

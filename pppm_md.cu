@@ -457,6 +457,10 @@ int main() {
 	double dt = 2e-4, realt = 0.0;
 	double r0,r1,r2,rel0,rel1,rel2;
 	double rho[bn][bn][bn], w[N][2][2][2];
+	
+	clock_t cpu_startTime, cpu_endTime;
+	double cpu_ElapseTime = 0.0;
+	cpu_startTime = clock();
 
 	// Initialization in a sphere
 	srand(time(NULL));
@@ -492,6 +496,10 @@ int main() {
 		realt += dt;
 		printf("update realtime \n");
 	}
+	
+	cpu_endTime = clock();
+	cpu_ElapseTime = ((double)(cpu_endTime - cpu_startTime)/CLOCKS_PER_SEC)*1000.0;
+	printf("The cpu calculation takes: %.3f ms\n",cpu_ElapseTime);
 
 //******[GPU] Input binning for local correct ******
 
