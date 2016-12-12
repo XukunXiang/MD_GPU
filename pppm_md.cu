@@ -21,11 +21,11 @@
 #define cutoff 200.0	//lower limit of the initial distance between electrons ~ 100 nm
 
 //PPPM setup
-#define bn 10					//number of boxes per direction
-#define boxcap 50		//temporary cap for particles in one box; update to class later
-#define hx 2.0E5			//[real space] cell size newR/bn
-#define hx3 8.0E15		//hx^3 as the cell volume
-#define bn3 1000			// total grid/mesh point number
+#define bn 100					//number of boxes per direction
+#define boxcap 5		//temporary cap for particles in one box; update to class later
+#define hx 2.0E4			//[real space] cell size newR/bn
+#define hx3 8.0E12		//hx^3 as the cell volume
+#define bn3 1000000			// total grid/mesh point number
 
 //parameters
 #define m 5.4858e-4		//elelctron mass
@@ -196,13 +196,17 @@ __global__ void OutputToInput(cufftComplex *f_fft_result,cufftComplex *b_fft_in_
 void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 	float h_input[bn][bn][bn],h_output[3][bn][bn][bn];
 	float kpoints[bn];
+	int i,j,k,idx;
 	int b_complex = bn*bn*((int)bn/2+1);
 
 	cufftReal *d_input,*d_output_x,*d_output_y,*d_output_z,*d_kpoints;
 	cufftComplex 	*f_fft_result, *b_fft_in_x, *b_fft_in_y, *b_fft_in_z;
 	cufftHandle plan_forward, plan_backward_x, plan_backward_y, plan_backward_z;
-
-	int i,j,k,idx;
+	
+	float elapsed = 0.0;
+	cudaEvent_t start, stop;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
 	
 	for(i=0; i<bn; i++){
 		for(j=0; j<bn; j++){
@@ -216,10 +220,10 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 	setupKpoints(kpoints);
 
 	printf("cuFFT is starting...\n");
-	for(i=0; i<bn; i++){
-		printf("%11.3f ",h_input[0][0][i]);
-	}
-	printf("\n");
+//	for(i=0; i<bn; i++){
+//		printf("%11.3f ",h_input[0][0][i]);
+//	}
+//	printf("\n");
 
 	//Allocate device momory
 	cudaMalloc((void**)&d_input, bn3*sizeof(cufftReal));
@@ -232,10 +236,17 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 	cudaMalloc((void**)&b_fft_in_z, b_complex*sizeof(cufftComplex));
 	cudaMalloc((void**)&d_kpoints, bn*sizeof(cufftReal));
 	
+	cudaEventRecord(start,0);
 	//Copy host momory to device
 	cudaMemcpy(d_input, &h_input[0][0][0], bn3, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_kpoints, &kpoints[0], bn, cudaMemcpyHostToDevice);
 	
+	cudaEventRecord(stop,0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsed, start, stop);
+
+	printf("The time for copy from host to device: %.3f ms\n", elapsed);
+
 	//cuFFT plan
 	cufftPlan3d(&plan_forward, bn, bn, bn, CUFFT_R2C);
 	cufftPlan3d(&plan_backward_x, bn, bn, bn, CUFFT_C2R);
@@ -243,9 +254,15 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 	cufftPlan3d(&plan_backward_z, bn, bn, bn, CUFFT_C2R);
 
 	printf("forward fft is starting...\n");
+	cudaEventRecord(start,0);
 	//forward fft
 	cufftExecR2C(plan_forward, d_input, f_fft_result);
 
+	cudaEventRecord(stop,0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsed, start, stop);
+	printf("The time for Forward FFT: %.3f ms\n", elapsed);
+	
 	//transforming output_of_fft to input_of_ifft
 	printf("output of fft ==> input of ifft\n");
 	dim3 DimGrid(bn,1,1);
@@ -253,21 +270,31 @@ void getGlobalField_cufft(double rho[bn][bn][bn],double field[3][bn][bn][bn]) {
 	OutputToInput<<<DimGrid,DimBlock>>>(f_fft_result,b_fft_in_x,b_fft_in_y,b_fft_in_z,d_kpoints);
 
 	printf("backward fft is starting...\n");
+	cudaEventRecord(start,0);
 	//ifft
 	cufftExecC2R(plan_backward_x, b_fft_in_x, d_output_x);
 	cufftExecC2R(plan_backward_y, b_fft_in_y, d_output_y);
 	cufftExecC2R(plan_backward_z, b_fft_in_z, d_output_z);
 
+	cudaEventRecord(stop,0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsed, start, stop);
+	printf("The time for Backward FFT: %.3f ms\n", elapsed);
+	
+	cudaEventRecord(start,0);
 	//Copy device memory to host
 	cudaMemcpy(&h_output[0][0][0][0], d_output_x, bn3, cudaMemcpyDeviceToHost);
 	cudaMemcpy(&h_output[1][0][0][0], d_output_y, bn3, cudaMemcpyDeviceToHost);
 	cudaMemcpy(&h_output[2][0][0][0], d_output_z, bn3, cudaMemcpyDeviceToHost);
 
-
-	for(i=0; i<bn; i++){
-		printf("%11.3f ",h_output[0][0][i]);
-	}
-	printf("\n");
+	cudaEventRecord(stop,0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsed, start, stop);
+	printf("The time for copy data from device to Host: %.3f ms\n", elapsed);
+//	for(i=0; i<bn; i++){
+//		printf("%11.3f ",h_output[0][0][i]);
+//	}
+//	printf("\n");
 	
 	for(i=0; i<bn; i++){
 		for(j=0; j<bn; j++){
