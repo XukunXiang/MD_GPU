@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
-#include <omp.h>
+//#include <omp.h>
 #include <fftw3.h>
 
 //simulation setup
@@ -252,7 +252,7 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 
 	getGlobalField(rho,field);
 
-//	#pragma omp parallel for private(bx,by,bz,pbx,pby,pbz,dbx,dby,dbz,nb_j,rel_c2,j,k,dummy)
+//	#pragma omp parallel for private(b,pbx,pby,pbz,dbx,dby,dbz,nb_j,rel_c2,j,k,dummy,jx,jy,jz,ijx,ijy,ijz,jrel2)
 	for (i=0; i<N; i++) {
 		for (fx=0; fx<3; fx++){
 			b[fx] = boxid[i][fx];
@@ -289,8 +289,11 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 										ijy = pbc_box(b[1]+jy);
 										ijz = pbc_box(b[2]+jz);
 										jrel2 = pow((rj[0]-ijx*hx),2.0)+pow((rj[1]-ijy*hx),2.0)+pow((rj[2]-ijz*hx),2.0);
+	//									#pragma omp atomic
 										field[0][ijx][ijy][ijz] -= (ijx*hx-rj[0])/pow(jrel2,1.5);
+	//									#pragma omp atomic
 										field[1][ijx][ijy][ijz] -= (ijy*hx-rj[1])/pow(jrel2,1.5);	
+	//									#pragma omp atomic
 										field[2][ijx][ijy][ijz] -= (ijz*hx-rj[2])/pow(jrel2,1.5);	
 									}
 								}
@@ -308,6 +311,7 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 				for (dbz=0; dbz<2; dbz++){
 					pbz = pbc_box(b[2]+dbz);
 					for (fx=0; fx<3; fx++){
+//						#pragma omp atomic
 						f[i][fx] += w[i][dbx][dby][dbz]*field[fx][dbx][dby][dbz];
 					}
 				}
@@ -315,6 +319,7 @@ void getForce(double f[N][3],double r[N][3], int box[bn][bn][bn][boxcap],int box
 		}
 
 	}
+
 	printf("getforce finish\n");
 
 /********** full interaction version	

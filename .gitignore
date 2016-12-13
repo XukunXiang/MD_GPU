@@ -11,3 +11,6 @@ d
 cudatest
 SimplecuFFT
 
+#job file
+*.sub
+*.o*
