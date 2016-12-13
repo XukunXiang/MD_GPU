@@ -24,6 +24,7 @@ For the project of GPGPU course, it is served as a preliminary  start of GPU imp
 ### Timing
 Since the only difference of the CPU and GPU verision is the FFT part, we focused the timing on that part.
 There are three part for GPU version:
+
 1. cudaMemcopyHosttoDevice
 2. FFT (forward FFT) to the k-space
 3. Launch a kernal to process data in k-space(on GPU)
@@ -32,10 +33,10 @@ There are three part for GPU version:
 
 ### Scaling test
 From the literature, the number of mesh points should be close to the total particle number, so then we set up our test set as:
-* 125 particles with 5*5*5 mesh
-* 1,000 particles with 10*10*10 mesh
-* 8,000 particles with 20*20*20 mesh
-* 125,000 particles with 50*50*50 mesh
-* 1,000,000 particles with 100*100*100 mesh
+* 125 particles with 5x5x5 mesh
+* 1,000 particles with 10x10x10 mesh
+* 8,000 particles with 20x20x20 mesh
+* 125,000 particles with 50x50x50 mesh
+* 1,000,000 particles with 100x100x100 mesh
 
 
